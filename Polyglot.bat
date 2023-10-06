@@ -39,6 +39,9 @@
 
 )
 
+:# Disabling argument expansion avoids issues with ! in arguments.
+SetLocal EnableExtensions DisableDelayedExpansion
+
 :# Temporarily Ignore Zone Checking
 SET "SEE_MASK_NOZONECHECKS=1"
 
@@ -51,6 +54,11 @@ SET "startDir=%cd%" & SET "scriptDir=%~dp0"
 @ECHO. %ARGS% | Findstr /I /C:"\?NoWait">nul && (SET "NoWait=TRUE" & SET "ARGS=%ARGS:?NoWait =%")
 @ECHO. %ARGS% | Findstr /I /C:"\?NoAdmin">nul && (SET "NoAdmin=TRUE" & SET "ARGS=%ARGS:?NoAdmin =%")
 
+:# Prepare the batch arguments, so that PowerShell parses them correctly
+SET ARGS=%*
+IF defined ARGS set ARGS=%ARGS:"=\"%
+IF defined ARGS set ARGS=%ARGS:'=''%
+
 :# Enforce Elevation If Required.
 IF "%NoAdmin%" == "FALSE" (
     net session >nul 2>&1 || (
@@ -59,6 +67,19 @@ IF "%NoAdmin%" == "FALSE" (
         EXIT /B 1
     )
 )
+
+:# Escape the file path for all possible invalid characters.
+SET "FilePath=%FilePath:'=''%"
+SET "FilePath=%FilePath:^=^^%"
+SET "FilePath=%FilePath:[=`[%"
+SET "FilePath=%FilePath:]=`]%"
+SET "FilePath=%FilePath:&=^&%"
+
+:# Ensure path is utilizing a lettered drive path.
+SET "FilePath=%~f0"
+IF "%FilePath:~0,2%" == "\\" PUSHD "%~dp0"
+IF "%FilePath:~0,2%" == "\\" SET "FilePath=%CD%\%~nx0"
+IF NOT "%FilePath:~0,2%" == "\\" CD "%~dp0"
 
 :# Always move to local directory.
 IF "%StartDir:%~0,2%" == "\\" (
@@ -70,7 +91,17 @@ IF "%StartDir:%~0,2%" == "\\" (
     )
 )
 
-:# PowerShell Shit goes here
+:# ============================================================================================================ #:
+:# The ^ before the first " ensures that the Batch parser does not enter quoted mode there, but that it enters  #:
+:# and exits quoted mode for every subsequent pair of ". This in turn protects the possible special chars & | < #:
+:# > within quoted arguments. Then the \ before each pair of " ensures that PowerShell's C command line parser  #:
+:# considers these pairs as part of the first and only argument following -c. Cherry on the cake, it's possible #:
+:# to pass a " to PS by entering two "" in the bat args.                                                        #:
+:# ============================================================================================================ #:
+ECHO In BATCH; Entering PowerShell.
+"%WinDir%\System32\WindowsPowerShell\v1.0\powershell.exe" -c ^
+    ^"Invoke-Expression ('^& {' + (get-content -raw '%FilePath%') + '} %ARGS%')"
+ECHO Exited PowerShell; Back in BATCH.
 
 :# Wait 60 seconds before closing.
 IF "%noWait%" == "FALSE" (
